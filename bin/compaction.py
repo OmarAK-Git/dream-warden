@@ -31,8 +31,6 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
-
 import conservation_check
 import dream_lib as dl
 
@@ -41,7 +39,7 @@ DEFAULT_MODEL = os.environ.get("DREAM_MODEL", "opus")
 # JSON schema for compaction output — the model only identifies supersede pairs;
 # it does NOT create new entries. Each pair names an entry to mark superseded
 # and the existing entry that becomes its canonical reference.
-COMPACTION_SCHEMA: dict = {
+COMPACTION_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
