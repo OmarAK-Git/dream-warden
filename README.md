@@ -84,32 +84,46 @@ result independently. The model physically cannot drop an entry.
 
 ### Install into a project
 
+Clone dream-warden **directly into your project** at the expected path:
+
 ```sh
 # from your project root:
-mkdir -p .workflow
-cp -r /path/to/dream-warden .workflow/_dream
-.workflow/_dream/install-hook.sh
-```
-
-Or clone directly:
-
-```sh
 git clone https://github.com/<your-user>/dream-warden .workflow/_dream
 .workflow/_dream/install-hook.sh
 ```
 
-### Standalone mode (development / dry-run)
+That's it. The post-commit hook is now active. `dream_dir()` detects
+`.workflow/_dream/` at your project root and resolves to it automatically —
+no env var or marker file needed.
 
-When running dream-warden as its own repo (not inside a project), declare
-standalone mode via env var or marker file:
+**About the files that come along for the ride:**
+
+- `.dream-standalone` — this marker lives at `.workflow/_dream/.dream-standalone`
+  in your project, not at your project root. `dream_dir()` only checks for it at
+  the repo root, so it is inert in installed mode. Leave it or delete it.
+- `example/` — reference documentation showing the expected file shapes. Inert;
+  delete it if you want a cleaner tree.
+- `.workflow/demo-feature-001/` inside the cloned directory — this is nested
+  under `_dream/`, not at your project's `.workflow/<slug>/` level. It is never
+  picked up as a real task. Delete it or leave it.
+- `playbook.md` and all queue/proposals/ledger dirs — already empty and ready
+  to use. Do not delete these.
+
+### Standalone mode (developing dream-warden itself)
+
+When working on dream-warden as its own repo, the committed `.dream-standalone`
+marker at the repo root enables standalone mode automatically — no config needed:
 
 ```sh
-# env var (per-invocation):
-DREAM_WARDEN_STANDALONE=1 python bin/consolidate.py --slug demo-feature-001 --sha synth01
+git clone https://github.com/<your-user>/dream-warden
+cd dream-warden
+python bin/consolidate.py --slug my-test-task --sha abc123   # .dream-standalone triggers standalone
+```
 
-# or create the marker file once (committed in this repo by default):
-touch .dream-standalone
-python bin/consolidate.py --slug demo-feature-001 --sha synth01
+Or use the env var to force standalone mode in any directory without the marker:
+
+```sh
+DREAM_WARDEN_STANDALONE=1 python bin/consolidate.py --slug my-test-task --sha abc123
 ```
 
 See `CONTRACT.md` §6 for the full `dream_dir()` resolution rules.
