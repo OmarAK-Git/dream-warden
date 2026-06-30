@@ -1,5 +1,9 @@
 # dream-warden
 
+![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
+
 Turn finished task work into long-term agent memory — without the model rewriting your notes in place.
 
 When you complete a task, dream-warden reads what you wrote in `.workflow/<slug>/`, proposes new playbook entries, and waits for you to approve before anything becomes memory. The post-commit hook handles the boring part (queuing). You run two commands when you're ready.
@@ -120,6 +124,8 @@ Entries are grouped into four sections (General Rules, Architecture Gotchas, Dom
 ---
 
 ## Why it's safe (short version)
+
+These aren't hygiene features — a memory store that shapes every future session is a poisoning surface ([OWASP ASI06](https://owasp.org/www-project-top-10-for-agentic-applications/)), and the human review gate is the mitigation.
 
 - **Proposals, not in-place edits.** The model never writes directly to your playbook. You always review a separate file first.
 - **Nothing gets dropped.** Existing entries are preserved by construction; a separate checker verifies that before approve will run.
