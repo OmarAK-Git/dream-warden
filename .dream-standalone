@@ -1,0 +1,10 @@
+This marker file declares that this repo IS dream-warden running in standalone mode.
+dream_dir() in bin/dream_lib.py checks for this file at repo root and resolves to
+the repo root rather than looking for a nested .workflow/_dream/ path.
+
+When dream-warden is installed into another project (at .workflow/_dream/), this file
+lives at .workflow/_dream/.dream-standalone — NOT at the project root — so it does
+not trigger standalone mode for the host project.
+
+Delete or rename this file only if you intend to install this copy inside another
+project and want the installed-mode path resolution to apply.
