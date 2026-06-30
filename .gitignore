@@ -6,6 +6,9 @@ __pycache__/
 # dream-warden temporary write artifacts
 .tmp-*
 
+# Local workflow slugs bootstrapped for standalone dry-runs (dev/bootstrap-workflow.sh)
+.workflow/
+
 # To keep your project's dream content private, uncomment any of the lines
 # below. The empty seed files (.gitkeep) remain committed regardless.
 #

@@ -28,7 +28,7 @@ as many as your workflow generates; missing files are silently skipped (but
 
 | File | Purpose | What it feeds |
 |------|---------|---------------|
-| `state.json` | Machine-readable status; must contain `{"status": "complete"}` for auto-enqueue to proceed without `--allow-incomplete` | Completion gate |
+| `state.json` | Machine-readable status; `{"status": "complete"}` is checked by `consolidate.py`, not by enqueue or the post-commit hook | Consolidation gate |
 | `plan.md` | The original task plan / acceptance criteria | Scope and intent context |
 | `final-report.md` | Outcome summary — what was built, what changed | Primary synthesis source |
 | `verification.md` | Test results, type-check output, lint results | Evidence backing for entries |
@@ -40,11 +40,17 @@ Configure which files are read in `bin/dream_lib.py` (`SLUG_FILES` and
 
 ---
 
-## 3. The "task is complete" signal
+## 3. Enqueue vs. consolidation gates
 
-`consolidate.py` reads `state.json` and checks for `status == "complete"` before
-synthesizing. Use `--allow-incomplete` to bypass this check (e.g. for dry-runs
-against the example task or for tasks that predate the status field).
+**Enqueue (post-commit hook / `enqueue.py`).** A commit is enqueued when it
+touches paths under `.workflow/<slug>/` (excluding `.workflow/_dream/`). The hook
+does not read `state.json` or any slug file contents — any commit that changes a
+task directory gets a queue entry.
+
+**Consolidation (`consolidate.py`).** Before synthesizing, reads `state.json` and
+requires `status == "complete"`. Use `--allow-incomplete` to bypass this check
+(e.g. for dry-runs against the example task or for tasks that predate the status
+field). `backfill.py` does not gate on `state.json` (older slugs may lack it).
 
 ---
 
@@ -96,9 +102,10 @@ both options. This is intentional — silent path guessing is a hidden-divergenc
 
 ---
 
-## 7. The consolidate.py synthesis seam
+## 7. The synthesis seam
 
-The single call to the Claude CLI in `bin/dream_lib.py::run_claude_json()` is the
+All model calls go through `bin/dream_lib.py::run_claude_json()` — invoked by
+`consolidate.py`, `compaction.py`, and `backfill.py`. This function is the
 **only site** that must change to swap from the local `claude -p` invocation to a
 managed Anthropic Dreams API call (if/when one becomes available):
 
@@ -116,13 +123,19 @@ is API-agnostic and requires no changes.
 
 ## 8. Example task
 
-See `example/demo-feature-001/` for a fully fictional sample showing the expected
-file shapes. The operational copy used for dry-runs lives at
-`.workflow/demo-feature-001/`.
+Contributor fixtures live under `dev/fixtures/demo-feature-001/` (fictional HTTP
+client timeout/circuit-breaker task). They are **not** installed into host projects
+— use `install.sh` for that.
 
-Dry-run command (standalone mode):
+Bootstrap a local slug directory for standalone dry-runs:
 
 ```sh
-DREAM_WARDEN_STANDALONE=1 python bin/consolidate.py \
-  --slug demo-feature-001 --sha synth01 --allow-incomplete
+dev/bootstrap-workflow.sh   # copies fixtures -> .workflow/demo-feature-001/ (gitignored)
+python bin/consolidate.py --slug demo-feature-001 --sha synth01 --allow-incomplete
+```
+
+Minimal `state.json` shape:
+
+```json
+{"slug": "my-feature", "status": "complete", "title": "Short task title"}
 ```

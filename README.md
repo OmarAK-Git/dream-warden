@@ -1,214 +1,174 @@
 # dream-warden
 
-An unofficial, local reimplementation of the **pattern** behind Anthropic's
-Managed Agents "Dreams" feature — built to run locally today, until a local
-Dreams ships (if it ever does).
+Turn finished task work into long-term agent memory — without the model rewriting your notes in place.
 
-> **Not affiliated with or endorsed by Anthropic.** This project is an
-> independent implementation of the memory-consolidation pattern described in
-> Anthropic's agent research. The `claude` CLI is used as a local synthesis
-> engine; no Managed Agents API is required.
+When you complete a task, dream-warden reads what you wrote in `.workflow/<slug>/`, proposes new playbook entries, and waits for you to approve before anything becomes memory. The post-commit hook handles the boring part (queuing). You run two commands when you're ready.
+
+> **Not affiliated with Anthropic.** Unofficial local take on the memory-consolidation pattern behind Managed Agents "Dreams." Uses the authenticated `claude` CLI as a synthesis engine today; no Managed Agents API required.
 
 ---
 
-## What it does
+## Install (once)
 
-dream-warden turns completed task artifacts into a curated long-term
-**playbook** — a structured markdown file of durable, reusable engineering
-insights. It runs out-of-band via a post-commit hook and never touches your
-source code, tests, or migrations.
+**You need:** Python 3.11+, and `claude login`.
 
-### Pipeline
-
-```
-commit ──▶ post-commit hook ──▶ queue/            (enqueue {slug, sha}; no synthesis)
-                                   │
-                consolidate.py ◀───┘  reads playbook.md (read-only) + slug files
-                       │              calls Claude headless (tool-less, json-schema)
-                       ▼
-               proposals/<ts>-<slug>.md            (OUTPUT store; atomic write)
-                       │
-            conservation_check.py                  (independent gate; nonzero on violation)
-                       │
-                  approve.py  (you)  ──▶ playbook.md (atomic promote) + ledger/ + commit
-
-# Compaction (periodic; no slug required):
-                compaction.py ──▶ proposals/<ts>-compaction.md  ──▶ approve.py
-                  (reads full playbook; proposes supersessions for near-duplicates;
-                   same conservation gate + human approval; no new entries created)
-```
-
----
-
-## Review-gate philosophy
-
-The synthesis model is **untrusted**. It runs with `--tools ""` (no repo access)
-and may only *suggest* additive entries. `consolidate.py` copies every existing
-entry **verbatim** and only appends — the model cannot drop or rewrite an entry.
-`conservation_check.py` then proves conservation independently. Nothing enters
-`playbook.md` until **you** run `approve.py`.
-
-The review gate is the mitigation for memory poisoning.
-
----
-
-## Conservation guarantee (deterministic, enforced in code)
-
-Every existing playbook entry must end up **retained**, **superseded-by** a new
-entry, or **merged-into** one — never silently dropped or duplicated. Every new
-entry carries provenance (source slug + commit SHA). `conservation_check.py`
-exits nonzero on any violation or a missing completion marker.
-
-This is **conservation-by-construction**: the model emits candidates only; code
-copies existing entries verbatim and appends new ones. The checker verifies the
-result independently. The model physically cannot drop an entry.
-
----
-
-## Advisory vs. enforced counts
-
-- **Enforced (conservation check):** entry IDs — every ID in the current playbook
-  must appear in every proposal, with a valid disposition. Exit 1 on any drop.
-- **Advisory (stale-count warning):** test-count claims in entry text (e.g.
-  "17 passed"). `approve.py` warns when it detects these but does not block
-  approval. The human reviewer is responsible for verifying them before approving.
-
----
-
-## Setup
-
-### Requirements
-
-- Python 3.11+
-- The `claude` CLI, authenticated (`claude login`)
-
-### Install into a project
-
-Clone dream-warden **directly into your project** at the expected path:
+From your project root:
 
 ```sh
-# from your project root:
-git clone https://github.com/<your-user>/dream-warden .workflow/_dream
+git clone --depth 1 https://github.com/<your-user>/dream-warden /tmp/dream-warden
+/tmp/dream-warden/install.sh .workflow/_dream
 .workflow/_dream/install-hook.sh
+rm -rf /tmp/dream-warden
 ```
 
-That's it. The post-commit hook is now active. `dream_dir()` detects
-`.workflow/_dream/` at your project root and resolves to it automatically —
-no env var or marker file needed.
+This copies only the runtime files — no dev fixtures or demo tasks. Done. Commits that touch `.workflow/<slug>/` get queued automatically. Your playbook lives at `.workflow/_dream/playbook.md`.
 
-**About the files that come along for the ride:**
+---
 
-- `.dream-standalone` — this marker lives at `.workflow/_dream/.dream-standalone`
-  in your project, not at your project root. `dream_dir()` only checks for it at
-  the repo root, so it is inert in installed mode. Leave it or delete it.
-- `example/` — reference documentation showing the expected file shapes. Inert;
-  delete it if you want a cleaner tree.
-- `.workflow/demo-feature-001/` inside the cloned directory — this is nested
-  under `_dream/`, not at your project's `.workflow/<slug>/` level. It is never
-  picked up as a real task. Delete it or leave it.
-- `playbook.md` and all queue/proposals/ledger dirs — already empty and ready
-  to use. Do not delete these.
+## Day-to-day use
 
-### Standalone mode (developing dream-warden itself)
+This is the whole loop:
 
-When working on dream-warden as its own repo, the committed `.dream-standalone`
-marker at the repo root enables standalone mode automatically — no config needed:
+```
+finish task  →  commit  →  consolidate  →  read proposal  →  approve (or don't)
+     ▲              │            │                              │
+     │         hook enqueues    │                              │
+     │         (automatic)      │                              │
+     └──────────────────────────┴──────────────────────────────┘
+```
+
+**1. Finish a task and commit.** Put artifacts in `.workflow/<slug>/` (see [What goes in a task folder](#what-goes-in-a-task-folder)) and commit as usual. The hook adds the slug to `queue/` — no extra step.
+
+**2. Consolidate when you're ready.** When something is sitting in the queue:
 
 ```sh
-git clone https://github.com/<your-user>/dream-warden
-cd dream-warden
-python bin/consolidate.py --slug my-test-task --sha abc123   # .dream-standalone triggers standalone
+cd .workflow/_dream
+python bin/consolidate.py
 ```
 
-Or use the env var to force standalone mode in any directory without the marker:
+This writes a proposal under `proposals/`. Nothing in your playbook changes yet.
+
+**3. Approve if you like it.**
 
 ```sh
-DREAM_WARDEN_STANDALONE=1 python bin/consolidate.py --slug my-test-task --sha abc123
+python bin/approve.py
 ```
 
-See `CONTRACT.md` §6 for the full `dream_dir()` resolution rules.
+Reads the newest proposal, promotes it into `playbook.md`, and commits with a `[dream-promote]` marker so the hook doesn't re-queue itself. Don't like it? Delete the proposal file and move on.
+
+That's it. Most of the time you never touch anything else.
 
 ---
 
-## Input contract
+## Catch-up mode (many tasks queued)
 
-See `CONTRACT.md` for the full specification. Short version: complete a task,
-write its output files to `.workflow/<slug>/`, commit — the hook enqueues it.
-
-The six expected files per task:
-
-| File | Role |
-|------|------|
-| `state.json` | Completion signal (`{"status": "complete"}`) |
-| `plan.md` | Task plan / acceptance criteria |
-| `final-report.md` | Outcome summary |
-| `verification.md` | Test / lint / type-check results |
-| `traceability.md` | Requirement and decision links |
-| `review.md` | Human review notes and lessons |
-
-See `example/demo-feature-001/` for a fully fictional sample.
-
----
-
-## Commands
+If you finished several tasks and want to process them in one sitting:
 
 ```sh
-# Enqueue a slug manually (the hook does this automatically on commit)
-python bin/enqueue.py --slug my-feature --sha <commit-sha>
+cd .workflow/_dream
+python bin/backfill.py          # synthesize queued slugs into one proposal (resumable)
+python bin/approve.py           # or batch_approve.py if you ran consolidate per task
+```
 
-# Synthesize a proposal from the oldest queue entry (default model: opus)
-DREAM_WARDEN_STANDALONE=1 python bin/consolidate.py
+`backfill.py` is the "many enqueues → one consolidated proposal" path. `batch_approve.py` is for when you already have several proposal files and want to promote them all in order.
 
-# Compact the playbook: detect near-duplicates, propose supersessions
-DREAM_WARDEN_STANDALONE=1 python bin/compaction.py
-DREAM_WARDEN_STANDALONE=1 python bin/compaction.py --model haiku   # cheaper
-DREAM_WARDEN_STANDALONE=1 python bin/compaction.py --dry-run       # preview only
+---
 
-# Validate a proposal against the current playbook
-DREAM_WARDEN_STANDALONE=1 python bin/conservation_check.py --proposal proposals/<ts>-<slug>.md
+## What goes in a task folder
 
-# Promote a reviewed proposal (human gate)
-DREAM_WARDEN_STANDALONE=1 python bin/approve.py --proposal proposals/<ts>-<slug>.md
+Each completed task lives at `.workflow/<slug>/`. The hook enqueues on commit; consolidation reads whatever files exist (missing ones are skipped).
 
-# Regenerate the compact digest after a hand-edit to playbook.md
-DREAM_WARDEN_STANDALONE=1 python bin/render_digest.py
+| File | What it's for |
+|------|----------------|
+| `state.json` | Set `"status": "complete"` when the task is done (consolidation checks this) |
+| `final-report.md` | What you built / changed |
+| `verification.md` | Test or lint output |
+| `review.md` | Lessons, gotchas, review notes |
+| `plan.md` | Original plan (optional context) |
+| `traceability.md` | Requirement links (optional context) |
+
+See `CONTRACT.md` for the full spec.
+
+---
+
+## Optional maintenance
+
+**Compaction** — run occasionally when the playbook feels repetitive. Finds near-duplicates and proposes supersessions (same review-and-approve flow, no new entries):
+
+```sh
+python bin/compaction.py
+python bin/approve.py
+```
+
+**Hand-edited the playbook?** Regenerate the compact digest agents load at startup:
+
+```sh
+python bin/render_digest.py
 ```
 
 ---
 
-## Sections
+## What you get
 
-| Title | Prefix | DR stands for |
-|-------|--------|--------------|
-| General Rules | `GR` | — |
-| Architecture Gotchas | `AG` | — |
-| **Domain Rules** | `DR` | **Domain Rules**: project-specific behavioral constraints and invariants |
-| Verified Snippets | `VS` | — |
+dream-warden maintains two views of the same memory:
 
-Rename "Domain Rules" in `bin/dream_lib.py` (`SECTIONS` constant) if your
-project uses different terminology. Configure subsystem scope tags via `SCOPES`.
+- **`playbook.md`** — source of truth (full entries, provenance, history)
+- **`playbook.digest.md`** — compact startup view; auto-updated on approve
+
+Entries are grouped into four sections (General Rules, Architecture Gotchas, Domain Rules, Verified Snippets). Rename or retag in `bin/dream_lib.py` if your project uses different names. AG/DR entries can carry scope tags so agents load only what's relevant to the current task — see `SCOPES` in the same file.
 
 ---
 
-## The consolidate.py synthesis seam
+## Why it's safe (short version)
 
-The **only** site that changes to swap to a managed Dreams API (when available):
+- **Proposals, not in-place edits.** The model never writes directly to your playbook. You always review a separate file first.
+- **Nothing gets dropped.** Existing entries are preserved by construction; a separate checker verifies that before approve will run.
+- **No repo access during synthesis.** The model runs tool-less (`--tools ""`); it only sees the playbook text and your task files.
+- **You are the gate.** Bad synthesis can't become memory unless you run `approve.py`.
 
-```python
-# bin/dream_lib.py — run_claude_json()
-cmd = [claude_executable(), "-p", "--output-format", "json", ...]
+More detail: conservation guarantees, loop guards, and the advisory vs. enforced checks are documented in `CONTRACT.md`.
+
+---
+
+## Advanced / reference
+
+<details>
+<summary>All commands (you probably won't need most of these)</summary>
+
+Run from `.workflow/_dream/` unless noted.
+
+```sh
+python bin/consolidate.py              # synthesize oldest queued slug
+python bin/backfill.py                 # synthesize many slugs into one proposal
+python bin/compaction.py               # propose near-duplicate supersessions
+python bin/approve.py                  # promote newest proposal
+python bin/approve.py --proposal proposals/<file>.md
+python bin/batch_approve.py            # promote all pending proposals in order
+python bin/conservation_check.py --proposal proposals/<file>.md
+python bin/render_digest.py            # after hand-editing playbook.md
+python bin/enqueue.py --slug X --sha Y # manual enqueue (hook does this for you)
 ```
 
-Replace this with `dreams.create(...)` or equivalent. Everything else —
-parsing, conservation, atomic write, ledger, approval — is API-agnostic.
+Default model is `opus` (`--model` or `DREAM_MODEL` env var to override).
+
+</details>
+
+<details>
+<summary>Developing dream-warden itself (standalone mode)</summary>
+
+If you're hacking on this repo — not installing it into another project — the `.dream-standalone` marker at the repo root tells scripts to use the repo root as the dream directory. See `CONTRACT.md` §6. Run `dev/bootstrap-workflow.sh` to copy fictional fixtures into `.workflow/demo-feature-001/` for dry-runs. The post-commit hook is only wired for installed layout; in standalone dev you pass `--slug` and `--sha` explicitly or enqueue manually.
+
+</details>
+
+<details>
+<summary>Synthesis seam (for swapping to a future Dreams API)</summary>
+
+All model calls go through `dream_lib.run_claude_json()` in `bin/dream_lib.py`. Replace that one function with `dreams.create(...)` or equivalent; everything else stays the same.
+
+</details>
 
 ---
 
-## The hook
+## License
 
-`.git/hooks/post-commit` only enqueues. It is loop-safe: it skips commits
-carrying the `[dream-promote]` marker and commits that touch only
-`.workflow/_dream/`. Note: `git commit --no-verify` does **not** suppress
-`post-commit` — these in-hook guards, not `--no-verify`, break the loop.
-
-Install/refresh with: `.workflow/_dream/install-hook.sh`
+MIT — see [LICENSE](LICENSE).
